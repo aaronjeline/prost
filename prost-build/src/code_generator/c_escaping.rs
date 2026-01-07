@@ -66,11 +66,17 @@ pub(super) fn unescape_c_escape_string(s: &str) -> Vec<u8> {
                 }
                 b'0'..=b'7' => {
                     debug!("another octal: {}, offset: {}", s, &s[p..]);
-                    let mut octal = 0;
+                    let mut octal: u8 = 0;
                     for _ in 0..3 {
                         if p < len && src[p] >= b'0' && src[p] <= b'7' {
                             debug!("\toctal: {octal}");
-                            octal = octal * 8 + (src[p] - b'0');
+                            // Compute: octal * 8 + (src[p] - b'0'), but with explicitly checked muls/adds
+                            // This ensures that if the user has written an octal code that doesn't fit in a u8,
+                            // we panic in release mode.
+                            octal = octal
+                                .checked_mul(8)
+                                .and_then(|o| o.checked_add(src[p] - b'0'))
+                                .expect("octal escape overflow. Octal value must fit in u8");
                             p += 1;
                         } else {
                             break;
@@ -127,5 +133,11 @@ mod tests {
     #[should_panic(expected = "incomplete hex value")]
     fn test_unescape_c_escape_string_incomplete_hex_value() {
         unescape_c_escape_string(r#"\x1"#);
+    }
+
+    #[test]
+    #[should_panic(expected = "octal escape overflow. Octal value must fit in u8")]
+    fn test_unescape_c_escape_octal_overflow() {
+        unescape_c_escape_string(r#"\700"#);
     }
 }
